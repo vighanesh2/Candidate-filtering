@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 
-const VALID_STATUSES = ["applied", "screened", "shortlisted", "in_interview", "offer", "rejected"];
+const VALID_STATUSES = ["applied", "screened", "shortlisted", "scheduling_sent", "in_interview", "offer", "rejected"];
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
