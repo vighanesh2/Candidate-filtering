@@ -1,10 +1,10 @@
 import mammoth from "mammoth";
 import { jobs } from "./jobs";
 import { supabaseAdmin } from "./supabase";
+import { researchCandidate } from "./research";
+import { callAnthropicMessages } from "./claude-client";
 
 const THRESHOLD = Number(process.env.AI_SHORTLIST_THRESHOLD ?? 70);
-// Lava proxies to Anthropic via ?u= query param
-const LAVA_URL = "https://api.lavapayments.com/v1/forward?u=https://api.anthropic.com/v1/messages";
 
 export type AIParsed = {
   skills: string[];
@@ -22,27 +22,7 @@ export type StatusHistoryEntry = {
 };
 
 async function callClaude(body: object): Promise<string> {
-  const token = process.env.LAVA_FORWARD_TOKEN!;
-  const res = await fetch(LAVA_URL, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json",
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "(no body)");
-    throw new Error(`Lava API error ${res.status}: ${errText}`);
-  }
-
-  const data = await res.json();
-  // Anthropic response shape: { content: [{ type: "text", text: "..." }] }
-  const text = data?.content?.[0]?.text;
-  if (!text) throw new Error(`Unexpected Lava response shape: ${JSON.stringify(data)}`);
-  return text.trim();
+  return callAnthropicMessages(body as Record<string, unknown>);
 }
 
 async function buildMessages(
@@ -156,4 +136,24 @@ Return exactly this JSON shape:
     .eq("id", applicationId);
 
   console.log(`[screen] ${applicationId} → score ${score} → ${newStatus}`);
+
+  // Auto-enrich shortlisted candidates
+  if (newStatus === "shortlisted") {
+    const { data: app } = await supabaseAdmin
+      .from("applications")
+      .select("full_name, email, linkedin_url, portfolio_url")
+      .eq("id", applicationId)
+      .single();
+
+    if (app) {
+      researchCandidate({
+        applicationId,
+        fullName: app.full_name,
+        email: app.email,
+        portfolioUrl: app.portfolio_url ?? null,
+        roleId,
+        aiParsed,
+      }).catch((err) => console.error("[research] FAILED:", err instanceof Error ? err.message : err));
+    }
+  }
 }

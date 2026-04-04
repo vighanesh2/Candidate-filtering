@@ -4,6 +4,7 @@ import { useEffect, useState, use } from "react";
 import Link from "next/link";
 import { jobs } from "@/lib/jobs";
 import type { AIParsed, StatusHistoryEntry } from "@/lib/screen";
+import type { ResearchProfile, ResearchSource } from "@/lib/research";
 
 type Application = {
   id: string;
@@ -21,6 +22,8 @@ type Application = {
   ai_screened_at: string | null;
   override_note: string | null;
   status_history: StatusHistoryEntry[];
+  research_profile: ResearchProfile | null;
+  research_completed_at: string | null;
 };
 
 const STATUS_OPTIONS = [
@@ -85,6 +88,8 @@ export default function CandidatePage({ params }: { params: Promise<{ id: string
   const [overrideNote, setOverrideNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [downloadingResume, setDownloadingResume] = useState(false);
+  const [runningResearch, setRunningResearch] = useState(false);
+  const [researchError, setResearchError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`/api/admin/applications/${id}`)
@@ -133,6 +138,25 @@ export default function CandidatePage({ params }: { params: Promise<{ id: string
     const { url } = await res.json();
     window.open(url, "_blank");
     setDownloadingResume(false);
+  }
+
+  async function runResearch() {
+    if (!app) return;
+    setRunningResearch(true);
+    setResearchError(null);
+    try {
+      const res = await fetch(`/api/admin/applications/${app.id}/research`, { method: "POST" });
+      if (res.ok) {
+        const updated = await fetch(`/api/admin/applications/${app.id}`).then((r) => r.json());
+        setApp(updated);
+      } else {
+        const body = await res.json().catch(() => ({}));
+        setResearchError(body.error ?? `Server error ${res.status}`);
+      }
+    } catch (err) {
+      setResearchError(err instanceof Error ? err.message : "Network error");
+    }
+    setRunningResearch(false);
   }
 
   if (loading) {
@@ -263,6 +287,74 @@ export default function CandidatePage({ params }: { params: Promise<{ id: string
               </div>
             )}
           </div>
+
+          {/* Research Profile */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-semibold text-slate-900">Research Profile</h2>
+              <button
+                onClick={runResearch}
+                disabled={runningResearch}
+                className="text-xs font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-50 transition-colors"
+              >
+                {runningResearch ? "Researching…" : app.research_completed_at ? "Re-run" : "Run research"}
+              </button>
+            </div>
+
+            {runningResearch ? (
+              <div className="flex items-center gap-3 text-sm text-slate-500 py-4">
+                <svg className="w-5 h-5 animate-spin text-indigo-400 shrink-0" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                </svg>
+                Researching candidate across LinkedIn, GitHub, and portfolio…
+              </div>
+            ) : researchError ? (
+              <div className="rounded-xl bg-red-50 border border-red-100 px-4 py-3 text-sm text-red-700">
+                Research failed: {researchError}
+              </div>
+            ) : !app.research_profile ? (
+              <p className="text-sm text-slate-400 py-2">
+                Research runs automatically for shortlisted candidates, or click &ldquo;Run research&rdquo; above.
+              </p>
+            ) : (
+              <div className="space-y-5">
+                {/* Candidate Brief */}
+                {app.research_profile.candidate_brief && (
+                  <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-indigo-500 mb-1.5">60-second brief</p>
+                    <p className="text-sm text-slate-700 leading-relaxed">{app.research_profile.candidate_brief}</p>
+                  </div>
+                )}
+
+                {/* Discrepancies */}
+                {app.research_profile.discrepancies.length > 0 && (
+                  <div className="bg-red-50 border border-red-100 rounded-xl p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-red-500 mb-2">Discrepancies flagged</p>
+                    <ul className="space-y-1">
+                      {app.research_profile.discrepancies.map((d, i) => (
+                        <li key={i} className="flex gap-2 text-sm text-red-700">
+                          <span className="mt-1 shrink-0">⚠</span>{d}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Source cards */}
+                <div className="space-y-3">
+                  <ResearchCard label="LinkedIn" source={app.research_profile.linkedin} />
+                  <ResearchCard label="GitHub" source={app.research_profile.github} />
+                  <ResearchCard label="Portfolio" source={app.research_profile.portfolio} />
+                  <ResearchCard label="X / Twitter" source={app.research_profile.twitter} />
+                </div>
+
+                <p className="text-xs text-slate-400">
+                  Completed {formatDate(app.research_completed_at!)}
+                </p>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Right column */}
@@ -331,6 +423,25 @@ export default function CandidatePage({ params }: { params: Promise<{ id: string
         </div>
       </div>
     </main>
+  );
+}
+
+function ResearchCard({ label, source }: { label: string; source: ResearchSource }) {
+  return (
+    <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-xs font-semibold text-slate-600">{label}</span>
+        {source.success ? (
+          <span className="text-xs text-emerald-600 font-medium">fetched</span>
+        ) : source.attempted ? (
+          <span className="text-xs text-amber-500 font-medium">unavailable</span>
+        ) : (
+          <span className="text-xs text-slate-400 font-medium">not attempted</span>
+        )}
+      </div>
+      {source.summary && <p className="text-sm text-slate-600 leading-relaxed">{source.summary}</p>}
+      {source.note && <p className="text-xs text-slate-400 mt-1 italic">{source.note}</p>}
+    </div>
   );
 }
 
