@@ -42,14 +42,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Invalid role: "${role}"` }, { status: 400 });
   }
 
+  // Edge case: role closed/paused
+  if (!job.open) {
+    return NextResponse.json(
+      { error: "This position is no longer accepting applications." },
+      { status: 409 }
+    );
+  }
+
+  // Edge case: invalid file format or oversized resume
   if (!resume || resume.size === 0) {
     return NextResponse.json({ error: "Resume is required." }, { status: 400 });
   }
   if (!ALLOWED_MIME_TYPES.includes(resume.type)) {
-    return NextResponse.json({ error: `Invalid resume type: "${resume.type}"` }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid file format. Please upload a PDF or DOCX file." },
+      { status: 400 }
+    );
   }
   if (resume.size > MAX_FILE_SIZE) {
-    return NextResponse.json({ error: "Resume must be under 10 MB." }, { status: 400 });
+    return NextResponse.json(
+      { error: `File too large (${(resume.size / 1024 / 1024).toFixed(1)} MB). Maximum size is 10 MB.` },
+      { status: 400 }
+    );
   }
 
   // Ensure bucket exists (creates it on first run if missing)
@@ -94,8 +109,15 @@ export async function POST(req: NextRequest) {
   });
 
   if (insertError) {
-    console.error("DB insert failed:", insertError.message);
     await supabaseAdmin.storage.from(RESUME_BUCKET).remove([storagePath]);
+    // Edge case: duplicate application (unique constraint on email + role_id)
+    if (insertError.code === "23505") {
+      return NextResponse.json(
+        { error: "You've already applied for this role. We'll be in touch if there's a match." },
+        { status: 409 }
+      );
+    }
+    console.error("DB insert failed:", insertError.message);
     return NextResponse.json({ error: "Failed to save application. Please try again." }, { status: 500 });
   }
 

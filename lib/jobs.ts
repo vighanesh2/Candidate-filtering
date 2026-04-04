@@ -5,6 +5,7 @@ export type Job = {
   location: string;
   remote: "Remote" | "Hybrid" | "On-site";
   level: "Entry" | "Mid" | "Senior" | "Lead" | "Staff";
+  open: boolean;
   responsibilities: string[];
   requirements: string[];
   niceToHave?: string[];
@@ -18,6 +19,7 @@ export const jobs: Job[] = [
     location: "San Francisco, CA",
     remote: "Hybrid",
     level: "Senior",
+    open: true,
     responsibilities: [
       "Design, build, and maintain high-performance APIs and microservices at scale.",
       "Collaborate with product and frontend teams to define and implement new features end-to-end.",
@@ -45,6 +47,7 @@ export const jobs: Job[] = [
     location: "Remote",
     remote: "Remote",
     level: "Mid",
+    open: true,
     responsibilities: [
       "Develop and deploy ML models for candidate matching, ranking, and resume parsing.",
       "Collaborate with data scientists to move research prototypes into production systems.",
@@ -72,6 +75,7 @@ export const jobs: Job[] = [
     location: "New York, NY",
     remote: "Hybrid",
     level: "Senior",
+    open: false,
     responsibilities: [
       "Own end-to-end design for core candidate and recruiter-facing product surfaces.",
       "Conduct user research, synthesize insights, and translate them into product decisions.",
@@ -99,6 +103,7 @@ export const jobs: Job[] = [
     location: "Remote",
     remote: "Remote",
     level: "Mid",
+    open: true,
     responsibilities: [
       "Build performant, accessible UI components and pages using React and TypeScript.",
       "Collaborate tightly with designers to implement pixel-accurate, delightful interfaces.",

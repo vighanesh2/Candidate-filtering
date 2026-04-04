@@ -40,7 +40,7 @@ function JobCard({ job }: { job: Job }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="border border-slate-200 rounded-2xl bg-white shadow-sm hover:shadow-md transition-shadow duration-200">
+    <div className={`border rounded-2xl bg-white shadow-sm transition-shadow duration-200 ${job.open ? "border-slate-200 hover:shadow-md" : "border-slate-100 opacity-60"}`}>
       <div className="p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -48,6 +48,11 @@ function JobCard({ job }: { job: Job }) {
             <p className="mt-1 text-sm text-slate-500">{job.team}</p>
           </div>
           <div className="flex flex-wrap gap-2 items-center">
+            {!job.open && (
+              <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-slate-100 text-slate-500">
+                Position closed
+              </span>
+            )}
             <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${remoteColors[job.remote]}`}>
               {job.remote}
             </span>
@@ -88,15 +93,21 @@ function JobCard({ job }: { job: Job }) {
       )}
 
       <div className="px-6 pb-6">
-        <Link
-          href={`/apply?role=${job.id}`}
-          className="mt-2 inline-flex items-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-sm font-semibold px-5 py-2.5 transition-colors"
-        >
-          Apply now
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-          </svg>
-        </Link>
+        {job.open ? (
+          <Link
+            href={`/apply?role=${job.id}`}
+            className="mt-2 inline-flex items-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-sm font-semibold px-5 py-2.5 transition-colors"
+          >
+            Apply now
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
+            </svg>
+          </Link>
+        ) : (
+          <span className="mt-2 inline-flex items-center rounded-xl bg-slate-100 text-slate-400 text-sm font-semibold px-5 py-2.5 cursor-not-allowed">
+            Applications closed
+          </span>
+        )}
       </div>
     </div>
   );

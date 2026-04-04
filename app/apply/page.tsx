@@ -7,12 +7,16 @@ import { jobs } from "@/lib/jobs";
 
 type FormState = "idle" | "submitting" | "success" | "error";
 
+const ALLOWED_EXTENSIONS = ["pdf", "docx"];
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+
 function ApplyForm() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const preselectedRole = searchParams.get("role") ?? "";
 
   const [state, setFormState] = useState<FormState>("idle");
+  const [apiError, setApiError] = useState<string>("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [fileName, setFileName] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -31,7 +35,14 @@ function ApplyForm() {
     if (!fields.email.trim()) e.email = "Email is required.";
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fields.email)) e.email = "Enter a valid email address.";
     if (!fields.role) e.role = "Please select a role.";
-    if (!fileInputRef.current?.files?.[0]) e.resume = "Please upload your resume.";
+    const file = fileInputRef.current?.files?.[0];
+    if (!file) {
+      e.resume = "Please upload your resume.";
+    } else {
+      const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+      if (!ALLOWED_EXTENSIONS.includes(ext)) e.resume = "Only PDF or DOCX files are accepted.";
+      else if (file.size > MAX_FILE_SIZE) e.resume = `File is too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Max is 10 MB.`;
+    }
     return e;
   }
 
@@ -54,6 +65,7 @@ function ApplyForm() {
     if (Object.keys(errs).length) { setErrors(errs); return; }
 
     setFormState("submitting");
+    setApiError("");
     const formData = new FormData();
     Object.entries(fields).forEach(([k, v]) => formData.append(k, v));
     const file = fileInputRef.current!.files![0];
@@ -61,9 +73,15 @@ function ApplyForm() {
 
     try {
       const res = await fetch("/api/apply", { method: "POST", body: formData });
-      if (!res.ok) throw new Error();
-      setFormState("success");
+      if (res.ok) {
+        setFormState("success");
+      } else {
+        const body = await res.json().catch(() => ({}));
+        setApiError(body.error ?? "Something went wrong. Please try again.");
+        setFormState("error");
+      }
     } catch {
+      setApiError("Something went wrong. Please try again.");
       setFormState("error");
     }
   }
@@ -153,8 +171,8 @@ function ApplyForm() {
         >
           <option value="">Select a role…</option>
           {jobs.map((job) => (
-            <option key={job.id} value={job.id}>
-              {job.title} — {job.team}
+            <option key={job.id} value={job.id} disabled={!job.open}>
+              {job.title} — {job.team}{!job.open ? " (Closed)" : ""}
             </option>
           ))}
         </select>
@@ -191,9 +209,9 @@ function ApplyForm() {
         </div>
       </Field>
 
-      {state === "error" && (
+      {state === "error" && apiError && (
         <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-          Something went wrong. Please try again.
+          {apiError}
         </p>
       )}
 
