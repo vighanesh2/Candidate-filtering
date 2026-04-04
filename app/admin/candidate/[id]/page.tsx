@@ -343,7 +343,7 @@ export default function CandidatePage({ params }: { params: Promise<{ id: string
               ) : (
                 <div className="space-y-3">
                   <p className="text-sm text-slate-500">
-                    Send the candidate 3–5 available 45-minute slots. Slots will be held as tentative on the interviewer&apos;s calendar until the candidate confirms.
+                    Send the candidate three available 45-minute slots. Other pending candidates cannot claim the same windows. Tentative holds stay on the interviewer&apos;s calendar until the candidate confirms one.
                   </p>
                   {scheduleError && (
                     <div className="rounded-xl bg-red-50 border border-red-100 px-4 py-3 text-sm text-red-700">

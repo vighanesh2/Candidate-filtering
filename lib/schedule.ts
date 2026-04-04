@@ -8,8 +8,12 @@ import {
   confirmEvent,
   deleteEvent,
 } from "./calendar";
+import { getTentativeHoldSlotsForInterviewer } from "./scheduling-holds";
 
 const resend = new Resend(process.env.RESEND_API_KEY!);
+
+/** Spec 3B: three simultaneous holds per offer; only one can be confirmed. */
+const OFFER_SLOT_COUNT = 3;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -43,11 +47,30 @@ function baseUrl(): string {
   return process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000";
 }
 
+/** Remove this application's tentative rows + Google events (before resend or after alternative approval). */
+export async function cancelTentativeSlotsForApplication(applicationId: string): Promise<void> {
+  const { data: rows } = await supabaseAdmin
+    .from("interview_slots")
+    .select("id, google_event_id, interviewer_email")
+    .eq("application_id", applicationId)
+    .eq("status", "tentative");
+
+  for (const row of rows ?? []) {
+    if (row.google_event_id) {
+      await deleteEvent(row.interviewer_email as string, row.google_event_id as string);
+    }
+    await supabaseAdmin
+      .from("interview_slots")
+      .update({ status: "cancelled" })
+      .eq("id", row.id as string);
+  }
+}
+
 // ─── Send Scheduling Options ──────────────────────────────────────────────────
 
 /**
- * Finds free slots, creates tentative holds, saves to DB, and emails the candidate.
- * Called by the admin when they move a candidate to scheduling.
+ * Finds free slots (excluding all DB tentative holds for this interviewer),
+ * creates tentative holds, saves to DB, and emails the candidate.
  */
 export async function sendSchedulingOptions(applicationId: string): Promise<void> {
   // 1. Load application
@@ -62,12 +85,22 @@ export async function sendSchedulingOptions(applicationId: string): Promise<void
   const job = jobs.find((j) => j.id === app.role_id);
   if (!job) throw new Error(`Job not found: ${app.role_id}`);
 
-  // 2. Find free slots on the interviewer's calendar
-  const freeSlots = await findFreeSlots(job.interviewerEmail, 5);
-  if (freeSlots.length === 0) throw new Error("No free slots found in the next 5 business days");
+  // 2. Release prior tentative offers for this candidate (admin resend)
+  await cancelTentativeSlotsForApplication(applicationId);
 
-  // 3. Create tentative holds on Google Calendar + save to Supabase
+  // 3. Other candidates' tentative holds block the same wall-clock windows (3B conflict prevention)
+  const extraBusy = await getTentativeHoldSlotsForInterviewer(job.interviewerEmail);
+  const freeSlots = await findFreeSlots(job.interviewerEmail, OFFER_SLOT_COUNT, {
+    extraBusy,
+  });
+  if (freeSlots.length < OFFER_SLOT_COUNT) {
+    throw new Error(
+      `Need ${OFFER_SLOT_COUNT} free slots; only found ${freeSlots.length}. Other pending offers may be holding times.`
+    );
+  }
+
   const token = crypto.randomUUID();
+  const offerBatchId = crypto.randomUUID();
   const savedSlots: InterviewSlot[] = [];
 
   for (const slot of freeSlots) {
@@ -86,6 +119,7 @@ export async function sendSchedulingOptions(applicationId: string): Promise<void
         end_time: slot.end.toISOString(),
         google_event_id: eventId,
         status: "tentative",
+        offer_batch_id: offerBatchId,
       })
       .select()
       .single();
@@ -106,12 +140,14 @@ export async function sendSchedulingOptions(applicationId: string): Promise<void
     .update({
       scheduling_token: token,
       scheduling_sent_at: new Date().toISOString(),
+      scheduling_follow_up_sent_at: null,
+      scheduling_awaiting_alternatives: false,
       status: "scheduling_sent",
       status_history: [
         ...((current?.status_history as object[]) ?? []),
         {
           status: "scheduling_sent",
-          note: `${savedSlots.length} interview slots offered`,
+          note: `${savedSlots.length} interview slots offered (batch ${offerBatchId.slice(0, 8)}…)`,
           changed_at: new Date().toISOString(),
           is_override: false,
         },
@@ -138,7 +174,7 @@ export async function sendSchedulingOptions(applicationId: string): Promise<void
 
 Congratulations — we'd love to move forward with your application for the ${job.title} role!
 
-Please choose one of the following interview times (45 minutes each):
+Please choose one of the following interview times (${OFFER_SLOT_COUNT} options, 45 minutes each):
 
 ${slotLines}
 
@@ -189,7 +225,20 @@ export async function confirmSlot(
   const job = jobs.find((j) => j.id === app.role_id);
   if (!job) throw new Error("Job not found");
 
-  // 3. Confirm the chosen Google Calendar event
+  // 3. Atomic confirm — only one session can flip tentative → confirmed for this row (3B race safety)
+  const { data: locked, error: lockErr } = await supabaseAdmin
+    .from("interview_slots")
+    .update({ status: "confirmed" })
+    .eq("id", slotId)
+    .eq("application_id", app.id)
+    .eq("status", "tentative")
+    .select()
+    .maybeSingle();
+
+  if (lockErr) throw new Error(lockErr.message);
+  if (!locked) throw new Error("Slot no longer available — someone else may have confirmed it.");
+
+  // 4. Confirm the chosen Google Calendar event
   if (slot.google_event_id) {
     await confirmEvent(
       slot.interviewer_email,
@@ -200,7 +249,7 @@ export async function confirmSlot(
     );
   }
 
-  // 4. Cancel (delete) the other tentative holds
+  // 5. Cancel (delete) the other tentative holds for this application
   const { data: otherSlots } = await supabaseAdmin
     .from("interview_slots")
     .select("id, google_event_id")
@@ -219,12 +268,6 @@ export async function confirmSlot(
         .eq("id", other.id);
     }
   }
-
-  // 5. Mark chosen slot as confirmed
-  await supabaseAdmin
-    .from("interview_slots")
-    .update({ status: "confirmed" })
-    .eq("id", slotId);
 
   // 6. Update application status
   const { data: current } = await supabaseAdmin
@@ -321,10 +364,12 @@ export async function getSchedulingPage(token: string): Promise<{
   jobTitle: string;
   slots: InterviewSlot[];
   alreadyConfirmed: boolean;
+  awaitingAlternatives: boolean;
+  hasPendingAlternativeRequest: boolean;
 }> {
   const { data: app, error } = await supabaseAdmin
     .from("applications")
-    .select("id, full_name, role_id, status")
+    .select("id, full_name, role_id, status, scheduling_awaiting_alternatives")
     .eq("scheduling_token", token)
     .single();
 
@@ -340,10 +385,58 @@ export async function getSchedulingPage(token: string): Promise<{
 
   const alreadyConfirmed = app.status === "in_interview";
 
+  const { data: pendingAlt } = await supabaseAdmin
+    .from("scheduling_alternative_proposals")
+    .select("id")
+    .eq("application_id", app.id)
+    .eq("status", "pending")
+    .maybeSingle();
+
   return {
     candidateName: app.full_name,
     jobTitle: job?.title ?? app.role_id,
     slots: (slots ?? []) as InterviewSlot[],
     alreadyConfirmed,
+    awaitingAlternatives: !!(app as { scheduling_awaiting_alternatives?: boolean })
+      .scheduling_awaiting_alternatives,
+    hasPendingAlternativeRequest: !!pendingAlt,
   };
+}
+
+/** 48h nudge for candidates who did not pick a slot (cron). */
+export async function sendSchedulingFollowUpNudges(): Promise<{ sent: number }> {
+  const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  const { data: apps } = await supabaseAdmin
+    .from("applications")
+    .select("id, full_name, email, role_id, scheduling_token, scheduling_sent_at")
+    .eq("status", "scheduling_sent")
+    .not("scheduling_sent_at", "is", null)
+    .lt("scheduling_sent_at", cutoff)
+    .is("scheduling_follow_up_sent_at", null);
+
+  let sent = 0;
+  for (const app of apps ?? []) {
+    const job = jobs.find((j) => j.id === app.role_id);
+    const link = `${baseUrl()}/schedule/${app.scheduling_token}`;
+    await resend.emails.send({
+      from: process.env.RESEND_FROM_EMAIL!,
+      to: app.email as string,
+      subject: `Reminder: pick your interview time — ${job?.title ?? "your application"}`,
+      text: `Hi ${app.full_name},
+
+We haven't heard back about your interview slot yet. Please choose a time as soon as you can:
+
+${link}
+
+If none of the times work, use the "request different times" option on that page.
+
+— The Hiring Team`,
+    });
+    await supabaseAdmin
+      .from("applications")
+      .update({ scheduling_follow_up_sent_at: new Date().toISOString() })
+      .eq("id", app.id as string);
+    sent += 1;
+  }
+  return { sent };
 }

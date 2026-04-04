@@ -60,21 +60,33 @@ function candidateSlots(day: Date): CalendarSlot[] {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+function intervalsOverlap(
+  aStart: number,
+  aEnd: number,
+  bStart: number,
+  bEnd: number
+): boolean {
+  return aStart < bEnd && aEnd > bStart;
+}
+
 /**
  * Finds up to `count` free 45-minute slots on the interviewer's calendar
- * within the next 5 business days (9am–5pm).
+ * within the next `businessDays` business days (9am–5pm).
+ * `extraBusy` adds other holds (e.g. tentative interview_slots for any candidate)
+ * so two offers cannot claim the same window.
  */
 export async function findFreeSlots(
   interviewerEmail: string,
-  count = 5
+  count = 5,
+  options?: { extraBusy?: CalendarSlot[]; businessDays?: number }
 ): Promise<CalendarSlot[]> {
   const cal = getCalendar();
-  const days = nextBusinessDays(5);
+  const businessDays = options?.businessDays ?? 5;
+  const days = nextBusinessDays(businessDays);
   const windowStart = days[0];
   const windowEnd = new Date(days[days.length - 1]);
   windowEnd.setHours(23, 59, 59, 999);
 
-  // Fetch busy intervals for the whole window in one API call
   const freeBusyRes = await cal.freebusy.query({
     requestBody: {
       timeMin: windowStart.toISOString(),
@@ -86,6 +98,8 @@ export async function findFreeSlots(
   const busyIntervals =
     freeBusyRes.data.calendars?.[interviewerEmail]?.busy ?? [];
 
+  const extraBusy = options?.extraBusy ?? [];
+
   const freeSlots: CalendarSlot[] = [];
 
   for (const day of days) {
@@ -94,13 +108,20 @@ export async function findFreeSlots(
     for (const slot of candidateSlots(day)) {
       if (freeSlots.length >= count) break;
 
-      const overlaps = busyIntervals.some((busy) => {
+      const s0 = slot.start.getTime();
+      const s1 = slot.end.getTime();
+
+      const overlapsCalendar = busyIntervals.some((busy) => {
         const busyStart = new Date(busy.start!).getTime();
         const busyEnd = new Date(busy.end!).getTime();
-        return slot.start.getTime() < busyEnd && slot.end.getTime() > busyStart;
+        return intervalsOverlap(s0, s1, busyStart, busyEnd);
       });
 
-      if (!overlaps) freeSlots.push(slot);
+      const overlapsHold = extraBusy.some((h) =>
+        intervalsOverlap(s0, s1, h.start.getTime(), h.end.getTime())
+      );
+
+      if (!overlapsCalendar && !overlapsHold) freeSlots.push(slot);
     }
   }
 

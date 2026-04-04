@@ -8,6 +8,8 @@ type PageData = {
   jobTitle: string;
   slots: InterviewSlot[];
   alreadyConfirmed: boolean;
+  awaitingAlternatives: boolean;
+  hasPendingAlternativeRequest: boolean;
 };
 
 function formatSlot(iso: string) {
@@ -24,6 +26,9 @@ export default function SchedulePage({ params }: { params: Promise<{ token: stri
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
+  const [altNote, setAltNote] = useState("");
+  const [altSubmitting, setAltSubmitting] = useState(false);
+  const [altMessage, setAltMessage] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`/api/schedule/${token}`)
@@ -61,6 +66,35 @@ export default function SchedulePage({ params }: { params: Promise<{ token: stri
       setError(body.error ?? "Failed to confirm slot.");
     }
     setConfirming(null);
+  }
+
+  async function submitAlternatives() {
+    setAltSubmitting(true);
+    setAltMessage(null);
+    const res = await fetch(`/api/schedule/${token}/alternatives`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ note: altNote }),
+    });
+    const body = await res.json();
+    setAltSubmitting(false);
+    if (res.ok) {
+      setAltMessage(
+        "Request sent. The hiring team will review new times. Your current slots stay reserved until then."
+      );
+      setAltNote("");
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              hasPendingAlternativeRequest: true,
+              awaitingAlternatives: true,
+            }
+          : prev
+      );
+    } else {
+      setAltMessage(body.error ?? "Could not send request.");
+    }
   }
 
   if (error) {
@@ -162,6 +196,39 @@ export default function SchedulePage({ params }: { params: Promise<{ token: stri
         <p className="text-xs text-slate-400 text-center mt-6">
           Slots are held for a limited time. Select as soon as possible to secure your preferred time.
         </p>
+
+        {(data.hasPendingAlternativeRequest || data.awaitingAlternatives) && (
+          <div className="mt-8 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            {data.hasPendingAlternativeRequest
+              ? "We're checking alternative times with the hiring team. You can still confirm one of the options above while you wait."
+              : "A scheduling request is being processed."}
+          </div>
+        )}
+
+        <div className="mt-8 rounded-2xl border border-slate-200 bg-white p-5">
+          <h2 className="text-sm font-semibold text-slate-900 mb-2">Need a different time?</h2>
+          <p className="text-xs text-slate-500 mb-3">
+            We&apos;ll find other slots (AI-ranked when available), ask the interviewer to approve, then email
+            you updated options. Your current holds stay in place until new times are approved.
+          </p>
+          <textarea
+            value={altNote}
+            onChange={(e) => setAltNote(e.target.value)}
+            placeholder="Optional: preferred days or times…"
+            rows={3}
+            disabled={altSubmitting || data.hasPendingAlternativeRequest}
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500 resize-none disabled:bg-slate-50"
+          />
+          <button
+            type="button"
+            onClick={submitAlternatives}
+            disabled={altSubmitting || data.hasPendingAlternativeRequest}
+            className="mt-3 w-full rounded-xl bg-slate-800 hover:bg-slate-900 disabled:opacity-50 text-white text-sm font-semibold py-2.5"
+          >
+            {altSubmitting ? "Sending…" : "Request different times"}
+          </button>
+          {altMessage && <p className="text-xs mt-2 text-slate-600">{altMessage}</p>}
+        </div>
       </div>
     </main>
   );
