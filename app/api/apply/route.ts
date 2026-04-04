@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Resend } from "resend";
 import { jobs } from "@/lib/jobs";
 import { supabaseAdmin } from "@/lib/supabase";
+import { screenCandidate } from "@/lib/screen";
 
 const ALLOWED_MIME_TYPES = [
   "application/pdf",
@@ -85,6 +86,8 @@ export async function POST(req: NextRequest) {
   const ext = resume.name.split(".").pop();
   const storagePath = `${role}/${Date.now()}_${email.replace(/[^a-z0-9]/gi, "_")}.${ext}`;
   const resumeBytes = await resume.arrayBuffer();
+  // Copy before upload — some runtimes detach the buffer after passing it to a stream
+  const resumeBytesForScreening = resumeBytes.slice(0);
 
   const { error: uploadError } = await supabaseAdmin.storage
     .from(RESUME_BUCKET)
@@ -99,14 +102,20 @@ export async function POST(req: NextRequest) {
   }
 
   // Insert application row into `applications` table
-  const { error: insertError } = await supabaseAdmin.from("applications").insert({
-    full_name: fullName,
-    email,
-    linkedin_url: linkedin,
-    portfolio_url: portfolio || null,
-    role_id: role,
-    resume_path: storagePath,
-  });
+  const { data: inserted, error: insertError } = await supabaseAdmin
+    .from("applications")
+    .insert({
+      full_name: fullName,
+      email,
+      linkedin_url: linkedin,
+      portfolio_url: portfolio || null,
+      role_id: role,
+      resume_path: storagePath,
+      status: "applied",
+      status_history: [{ status: "applied", note: null, changed_at: new Date().toISOString(), is_override: false }],
+    })
+    .select("id")
+    .single();
 
   if (insertError) {
     await supabaseAdmin.storage.from(RESUME_BUCKET).remove([storagePath]);
@@ -119,6 +128,19 @@ export async function POST(req: NextRequest) {
     }
     console.error("DB insert failed:", insertError.message);
     return NextResponse.json({ error: "Failed to save application. Please try again." }, { status: 500 });
+  }
+
+  // Trigger AI screening — awaited so Next.js doesn't cut it off before it runs
+  console.log("[screen] Triggering for", inserted!.id);
+  try {
+    await screenCandidate({
+      applicationId: inserted!.id,
+      roleId: role,
+      resumeBytes: resumeBytesForScreening,
+      mimeType: resume.type,
+    });
+  } catch (err) {
+    console.error("[screen] FAILED:", err instanceof Error ? err.message : err);
   }
 
   // Send confirmation email (non-blocking — don't fail the request if email fails)
