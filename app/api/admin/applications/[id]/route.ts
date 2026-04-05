@@ -16,7 +16,17 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: error.message }, { status: 404 });
   }
 
-  return NextResponse.json(data);
+  const { data: confSlot } = await supabaseAdmin
+    .from("interview_slots")
+    .select("calendar_candidate_rsvp, calendar_rsvp_synced_at, start_time")
+    .eq("application_id", id)
+    .eq("status", "confirmed")
+    .maybeSingle();
+
+  return NextResponse.json({
+    ...data,
+    confirmed_interview_slot: confSlot ?? null,
+  });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

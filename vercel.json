@@ -4,6 +4,10 @@
     {
       "path": "/api/cron/scheduling-nudge",
       "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/cron/calendar-rsvp",
+      "schedule": "15 * * * *"
     }
   ]
 }

@@ -25,6 +25,7 @@ export type InterviewSlot = {
   end_time: string;
   google_event_id: string | null;
   status: "tentative" | "confirmed" | "cancelled";
+  calendar_candidate_rsvp?: string | null;
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -45,6 +46,14 @@ function formatSlotForEmail(start: Date, index: number): string {
 
 function baseUrl(): string {
   return process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000";
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 /** Remove this application's tentative rows + Google events (before resend or after alternative approval). */
@@ -200,7 +209,11 @@ The Hiring Team`,
 export async function confirmSlot(
   token: string,
   slotId: string
-): Promise<{ candidateName: string; confirmedSlot: InterviewSlot }> {
+): Promise<{
+  candidateName: string;
+  confirmedSlot: InterviewSlot;
+  meetLink: string | null;
+}> {
   // 1. Validate token → application
   const { data: app, error: appError } = await supabaseAdmin
     .from("applications")
@@ -238,16 +251,27 @@ export async function confirmSlot(
   if (lockErr) throw new Error(lockErr.message);
   if (!locked) throw new Error("Slot no longer available — someone else may have confirmed it.");
 
-  // 4. Confirm the chosen Google Calendar event
-  if (slot.google_event_id) {
-    await confirmEvent(
-      slot.interviewer_email,
-      slot.google_event_id,
-      app.full_name,
-      app.email,
-      job.title
-    );
-  }
+  // 4. New Calendar event + Meet + guest invite (insert), then remove tentative hold
+  const { eventId: newGoogleEventId, meetLink } = await confirmEvent(
+    slot.interviewer_email,
+    {
+      holdEventId: (slot.google_event_id as string | null) ?? null,
+      startTimeIso: slot.start_time as string,
+      endTimeIso: slot.end_time as string,
+      candidateName: app.full_name,
+      candidateEmail: app.email,
+      jobTitle: job.title,
+    }
+  );
+  await supabaseAdmin
+    .from("interview_slots")
+    .update({
+      google_event_id: newGoogleEventId,
+      calendar_candidate_rsvp: "needs_action",
+      calendar_rsvp_synced_at: new Date().toISOString(),
+      calendar_acceptance_notified: false,
+    })
+    .eq("id", slotId);
 
   // 5. Cancel (delete) the other tentative holds for this application
   const { data: otherSlots } = await supabaseAdmin
@@ -314,6 +338,18 @@ export async function confirmSlot(
     hour12: true,
   });
 
+  const meetText = meetLink
+    ? `\n\nGoogle Meet (join at interview time):\n${meetLink}\n`
+    : "\n\nGoogle Meet: open your Google Calendar invitation — the video link is on that event.\n";
+
+  const meetHtml = meetLink
+    ? `<p style="margin:16px 0 0;"><strong>Google Meet</strong><br/><a href="${escapeHtml(meetLink)}" style="color:#4f46e5;">${escapeHtml(meetLink)}</a></p>`
+    : `<p style="margin:16px 0 0;color:#64748b;font-size:14px;">Google Meet link: open your Google Calendar invitation — the video link is on that event.</p>`;
+
+  const interviewerMeet = meetLink
+    ? `\n\nGoogle Meet link:\n${meetLink}\n`
+    : "";
+
   await Promise.all([
     // Candidate confirmation
     resend.emails.send({
@@ -327,12 +363,22 @@ Your interview is confirmed!
 Role: ${job.title}
 Date: ${dayStr}
 Time: ${timeOnlyStr} (45 minutes)
-Interviewer: ${slot.interviewer_email}
-
-A calendar invite will follow shortly. Please let us know if you need to reschedule.
+Interviewer: ${slot.interviewer_email}${meetText}
+You should also receive a Google Calendar invitation by email. Please open it and tap Yes / Accept in Google Calendar — you do not need to reply to this email.
 
 Best,
 The Hiring Team`,
+      html: `<p>Hi ${escapeHtml(app.full_name)},</p>
+<p>Your interview is confirmed!</p>
+<ul style="margin:12px 0;padding-left:20px;color:#334155;">
+<li><strong>Role:</strong> ${escapeHtml(job.title)}</li>
+<li><strong>Date:</strong> ${escapeHtml(dayStr)}</li>
+<li><strong>Time:</strong> ${escapeHtml(timeOnlyStr)} (45 minutes)</li>
+<li><strong>Interviewer:</strong> ${escapeHtml(slot.interviewer_email as string)}</li>
+</ul>
+${meetHtml}
+<p style="margin-top:16px;color:#334155;">You should also receive a <strong>Google Calendar</strong> invitation. Please open it and tap <strong>Yes</strong> / Accept — you do not need to reply to this email.</p>
+<p style="color:#64748b;font-size:14px;">Best,<br/>The Hiring Team</p>`,
     }),
 
     // Interviewer notification
@@ -347,14 +393,33 @@ ${app.full_name} has confirmed their interview slot.
 Role: ${job.title}
 Candidate: ${app.full_name} (${app.email})
 Date: ${dayStr}
-Time: ${timeOnlyStr} (45 minutes)
+Time: ${timeOnlyStr} (45 minutes)${interviewerMeet}
+A calendar invite with Google Meet was sent to the candidate via Google Calendar. Other tentative holds have been removed.
 
-The calendar event has been updated. Other tentative holds have been removed.`,
+You will get another email when they accept the invite in Calendar (we do not wait for an email reply).`,
+      html: `<p>Hi,</p>
+<p><strong>${escapeHtml(app.full_name)}</strong> has confirmed their interview slot.</p>
+<ul style="margin:12px 0;padding-left:20px;color:#334155;">
+<li><strong>Role:</strong> ${escapeHtml(job.title)}</li>
+<li><strong>Candidate:</strong> ${escapeHtml(app.full_name)} (${escapeHtml(app.email)})</li>
+<li><strong>Date:</strong> ${escapeHtml(dayStr)}</li>
+<li><strong>Time:</strong> ${escapeHtml(timeOnlyStr)} (45 minutes)</li>
+</ul>
+${
+        meetLink
+          ? `<p><strong>Google Meet</strong><br/><a href="${escapeHtml(meetLink)}">${escapeHtml(meetLink)}</a></p>`
+          : ""
+      }
+<p style="color:#334155;">A calendar invite was sent to the candidate. Other tentative holds have been removed.</p>`,
     }),
   ]);
 
   console.log(`[schedule] Confirmed slot ${slotId} for application ${app.id}`);
-  return { candidateName: app.full_name, confirmedSlot: slot as InterviewSlot };
+  return {
+    candidateName: app.full_name,
+    confirmedSlot: { ...(slot as InterviewSlot), google_event_id: newGoogleEventId },
+    meetLink,
+  };
 }
 
 // ─── Load Slots for Candidate Page ───────────────────────────────────────────
@@ -366,6 +431,8 @@ export async function getSchedulingPage(token: string): Promise<{
   alreadyConfirmed: boolean;
   awaitingAlternatives: boolean;
   hasPendingAlternativeRequest: boolean;
+  /** Google Calendar RSVP for the confirmed slot (3C). */
+  calendarInviteRsvp: string | null;
 }> {
   const { data: app, error } = await supabaseAdmin
     .from("applications")
@@ -392,6 +459,12 @@ export async function getSchedulingPage(token: string): Promise<{
     .eq("status", "pending")
     .maybeSingle();
 
+  const confirmed = (slots ?? []).find((s) => s.status === "confirmed") as
+    | InterviewSlot
+    | undefined;
+  const calendarInviteRsvp =
+    (confirmed?.calendar_candidate_rsvp as string | null | undefined) ?? null;
+
   return {
     candidateName: app.full_name,
     jobTitle: job?.title ?? app.role_id,
@@ -400,6 +473,7 @@ export async function getSchedulingPage(token: string): Promise<{
     awaitingAlternatives: !!(app as { scheduling_awaiting_alternatives?: boolean })
       .scheduling_awaiting_alternatives,
     hasPendingAlternativeRequest: !!pendingAlt,
+    calendarInviteRsvp,
   };
 }
 

@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { google } from "googleapis";
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
@@ -141,6 +142,7 @@ export async function createTentativeHold(
 
   const event = await cal.events.insert({
     calendarId: interviewerEmail,
+    sendUpdates: "none",
     requestBody: {
       summary: `[Hold] Interview – ${candidateName}`,
       description:
@@ -155,32 +157,165 @@ export async function createTentativeHold(
   return event.data.id!;
 }
 
+export type ConfirmInterviewCalendarParams = {
+  /** Tentative hold created at scheduling-offer time; removed after the real invite is created. */
+  holdEventId: string | null;
+  startTimeIso: string;
+  endTimeIso: string;
+  candidateName: string;
+  candidateEmail: string;
+  jobTitle: string;
+};
+
+export type ConfirmInterviewCalendarResult = {
+  eventId: string;
+  /** HTTPS Meet URL when Google returns it (for emails / UI). */
+  meetLink: string | null;
+};
+
+function meetLinkFromEventBody(data: {
+  hangoutLink?: string | null;
+  conferenceData?: { entryPoints?: { entryPointType?: string | null; uri?: string | null }[] | null } | null;
+}): string | null {
+  const direct = data.hangoutLink?.trim();
+  if (direct) return direct;
+  const video = data.conferenceData?.entryPoints?.find(
+    (ep) => ep.entryPointType === "video" && ep.uri?.trim()
+  );
+  if (video?.uri?.trim()) return video.uri.trim();
+  return null;
+}
+
 /**
- * Converts a tentative hold into a confirmed interview event,
- * adding the candidate as an attendee.
+ * Creates a **new** Google Calendar event with the candidate as guest, **Google Meet**, and
+ * `sendUpdates: "all"` so Google emails the invitation.
+ *
+ * We use `events.insert` (not `patch` on the hold) because patching a tentative internal hold
+ * often fails to attach Meet or to send guest invites reliably.
+ *
+ * @returns New event id (store on `interview_slots.google_event_id`) and Meet URL when present.
  */
 export async function confirmEvent(
   interviewerEmail: string,
-  eventId: string,
-  candidateName: string,
-  candidateEmail: string,
-  jobTitle: string
-): Promise<void> {
+  params: ConfirmInterviewCalendarParams
+): Promise<ConfirmInterviewCalendarResult> {
   const cal = getCalendar();
+  const {
+    holdEventId,
+    startTimeIso,
+    endTimeIso,
+    candidateName,
+    candidateEmail,
+    jobTitle,
+  } = params;
 
-  await cal.events.patch({
+  // sendUpdates: "all" → Google emails the guest. Do NOT add the organizer as an attendee.
+  let inserted;
+  try {
+    inserted = await cal.events.insert({
+      calendarId: interviewerEmail,
+      sendUpdates: "all",
+      conferenceDataVersion: 1,
+      requestBody: {
+        summary: `Interview – ${candidateName} (${jobTitle})`,
+        description: `Confirmed interview with ${candidateName} (${candidateEmail}).
+
+Join: use the Google Meet link on this calendar event (or open the event in Google Calendar).
+
+RSVP: use Yes / Maybe / No in the invitation email or in Google Calendar (you do not need to reply to the employer's separate email).`,
+        start: { dateTime: startTimeIso },
+        end: { dateTime: endTimeIso },
+        transparency: "opaque",
+        guestsCanInviteOthers: false,
+        guestsCanSeeOtherGuests: false,
+        attendees: [
+          {
+            email: candidateEmail,
+            displayName: candidateName,
+            responseStatus: "needsAction",
+          },
+        ],
+        conferenceData: {
+          createRequest: {
+            requestId: randomUUID(),
+            conferenceSolutionKey: { type: "hangoutsMeet" },
+          },
+        },
+      },
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const gaxios = err as { response?: { data?: unknown } };
+    const detail = gaxios.response?.data
+      ? ` ${JSON.stringify(gaxios.response.data)}`
+      : "";
+    console.error("[calendar] confirmEvent insert failed:", msg + detail);
+    throw new Error(
+      `Google Calendar could not create the interview invite (Meet + guest). ${msg}. If this mentions permissions or conference data, reconnect Google OAuth with Calendar scope or check Workspace Meet settings.${detail ? " Details logged server-side." : ""}`
+    );
+  }
+
+  const newEventId = inserted.data.id;
+  if (!newEventId) {
+    throw new Error("Google Calendar returned no event id after insert");
+  }
+
+  let meetLink = meetLinkFromEventBody(inserted.data);
+  if (!meetLink) {
+    const refreshed = await cal.events.get({
+      calendarId: interviewerEmail,
+      eventId: newEventId,
+    });
+    meetLink = meetLinkFromEventBody(refreshed.data);
+  }
+
+  if (!meetLink) {
+    console.warn(
+      "[calendar] Event created but no Meet link in API response — check Google Workspace Meet settings or admin policy."
+    );
+  }
+
+  if (holdEventId) {
+    await deleteEvent(interviewerEmail, holdEventId);
+  }
+
+  return { eventId: newEventId, meetLink };
+}
+
+export type CalendarRsvpStatus =
+  | "needs_action"
+  | "accepted"
+  | "declined"
+  | "tentative"
+  | "unknown";
+
+/** Reads the candidate's responseStatus on the organizer's calendar event. */
+export async function fetchCandidateCalendarRsvp(
+  interviewerEmail: string,
+  eventId: string,
+  candidateEmail: string
+): Promise<CalendarRsvpStatus> {
+  const cal = getCalendar();
+  const ev = await cal.events.get({
     calendarId: interviewerEmail,
     eventId,
-    requestBody: {
-      summary: `Interview – ${candidateName} (${jobTitle})`,
-      description: `Confirmed interview with ${candidateName} (${candidateEmail}).`,
-      status: "confirmed",
-      attendees: [
-        { email: interviewerEmail },
-        { email: candidateEmail, displayName: candidateName },
-      ],
-    },
   });
+  const norm = candidateEmail.trim().toLowerCase();
+  const attendees = ev.data.attendees ?? [];
+  const guest = attendees.find((a) => (a.email ?? "").toLowerCase() === norm);
+  if (!guest) return "unknown";
+  switch (guest.responseStatus) {
+    case "accepted":
+      return "accepted";
+    case "declined":
+      return "declined";
+    case "tentative":
+      return "tentative";
+    case "needsAction":
+      return "needs_action";
+    default:
+      return "unknown";
+  }
 }
 
 /**

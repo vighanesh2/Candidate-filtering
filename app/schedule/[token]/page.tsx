@@ -10,6 +10,7 @@ type PageData = {
   alreadyConfirmed: boolean;
   awaitingAlternatives: boolean;
   hasPendingAlternativeRequest: boolean;
+  calendarInviteRsvp: string | null;
 };
 
 function formatSlot(iso: string) {
@@ -26,6 +27,7 @@ export default function SchedulePage({ params }: { params: Promise<{ token: stri
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
+  const [confirmedMeetLink, setConfirmedMeetLink] = useState<string | null>(null);
   const [altNote, setAltNote] = useState("");
   const [altSubmitting, setAltSubmitting] = useState(false);
   const [altMessage, setAltMessage] = useState<string | null>(null);
@@ -40,6 +42,28 @@ export default function SchedulePage({ params }: { params: Promise<{ token: stri
       .catch(() => setError("Failed to load scheduling page."));
   }, [token]);
 
+  // Refresh RSVP from server (cron syncs Google Calendar — no email reply required).
+  useEffect(() => {
+    if (!data) return;
+    const hasConfirmed =
+      confirmed || data.alreadyConfirmed || data.slots.some((s) => s.status === "confirmed");
+    if (!hasConfirmed) return;
+    const rsvp =
+      data.calendarInviteRsvp ??
+      data.slots.find((s) => s.status === "confirmed")?.calendar_candidate_rsvp ??
+      null;
+    if (rsvp === "accepted" || rsvp === "declined") return;
+    const id = setInterval(() => {
+      fetch(`/api/schedule/${token}`)
+        .then((r) => r.json())
+        .then((d) => {
+          if (!d.error) setData(d);
+        })
+        .catch(() => {});
+    }, 90_000);
+    return () => clearInterval(id);
+  }, [data, confirmed, token]);
+
   async function handleConfirm(slotId: string) {
     setConfirming(slotId);
     const res = await fetch(`/api/schedule/${token}`, {
@@ -50,13 +74,15 @@ export default function SchedulePage({ params }: { params: Promise<{ token: stri
     const body = await res.json();
     if (res.ok) {
       setConfirmed(true);
+      setConfirmedMeetLink(typeof body.meetLink === "string" ? body.meetLink : null);
       setData((prev) =>
         prev
           ? {
               ...prev,
+              calendarInviteRsvp: "needs_action",
               slots: prev.slots.map((s) =>
                 s.id === slotId
-                  ? { ...s, status: "confirmed" }
+                  ? { ...s, status: "confirmed", calendar_candidate_rsvp: "needs_action" }
                   : { ...s, status: "cancelled" }
               ),
             }
@@ -124,6 +150,10 @@ export default function SchedulePage({ params }: { params: Promise<{ token: stri
   if (confirmed || data.alreadyConfirmed || confirmedSlot) {
     const slot = confirmedSlot ?? data.slots[0];
     const { day, time } = slot ? formatSlot(slot.start_time) : { day: "", time: "" };
+    const rsvp =
+      data.calendarInviteRsvp ??
+      slot?.calendar_candidate_rsvp ??
+      null;
     return (
       <main className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
         <div className="bg-white rounded-2xl border border-emerald-100 p-8 max-w-md w-full text-center">
@@ -142,8 +172,33 @@ export default function SchedulePage({ params }: { params: Promise<{ token: stri
               <p className="text-slate-500">{time} · 45 minutes</p>
             </div>
           )}
+          {confirmedMeetLink && (
+            <a
+              href={confirmedMeetLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-4 inline-flex items-center justify-center w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold py-3 px-4 transition-colors"
+            >
+              Open Google Meet
+            </a>
+          )}
+          {rsvp === "accepted" ? (
+            <p className="text-sm text-emerald-700 mt-4 rounded-xl bg-emerald-50 border border-emerald-100 px-3 py-2">
+              You&apos;ve accepted the Google Calendar invite. No email reply needed.
+            </p>
+          ) : rsvp === "declined" ? (
+            <p className="text-sm text-amber-800 mt-4 rounded-xl bg-amber-50 border border-amber-100 px-3 py-2">
+              Your calendar shows Declined — please email the hiring team if this was a mistake.
+            </p>
+          ) : (
+            <p className="text-sm text-indigo-800 mt-4 rounded-xl bg-indigo-50 border border-indigo-100 px-3 py-2 text-left">
+              <span className="font-semibold">Next step:</span> open the Google Calendar invitation (check your inbox)
+              and tap <strong>Yes</strong> / Accept. You don&apos;t need to reply to our email — this page updates when
+              we detect your response (usually within an hour).
+            </p>
+          )}
           <p className="text-xs text-slate-400 mt-4">
-            A confirmation email has been sent to you. Please reach out if you need to reschedule.
+            A confirmation email was also sent. Reach out if you need to reschedule.
           </p>
         </div>
       </main>

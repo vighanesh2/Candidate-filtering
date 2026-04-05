@@ -6,6 +6,17 @@ import { jobs } from "@/lib/jobs";
 import type { AIParsed, StatusHistoryEntry } from "@/lib/screen";
 import type { ResearchProfile, ResearchSource } from "@/lib/research";
 
+type InterviewTranscriptRecord = {
+  id: string;
+  provider: string;
+  external_id: string | null;
+  title: string | null;
+  transcript: string | null;
+  summary: string | null;
+  action_items: unknown;
+  created_at: string;
+};
+
 type Application = {
   id: string;
   created_at: string;
@@ -24,6 +35,11 @@ type Application = {
   status_history: StatusHistoryEntry[];
   research_profile: ResearchProfile | null;
   research_completed_at: string | null;
+  confirmed_interview_slot?: {
+    calendar_candidate_rsvp: string | null;
+    calendar_rsvp_synced_at: string | null;
+    start_time: string;
+  } | null;
 };
 
 const STATUS_OPTIONS = [
@@ -95,6 +111,12 @@ export default function CandidatePage({ params }: { params: Promise<{ id: string
   const [sendingSchedule, setSendingSchedule] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [scheduleSent, setScheduleSent] = useState(false);
+  const [interviewTranscripts, setInterviewTranscripts] = useState<InterviewTranscriptRecord[]>([]);
+  const [transcriptsLoading, setTranscriptsLoading] = useState(false);
+  const [assemblyAudioUrl, setAssemblyAudioUrl] = useState("");
+  const [firefliesTranscriptId, setFirefliesTranscriptId] = useState("");
+  const [transcriptImporting, setTranscriptImporting] = useState(false);
+  const [transcriptError, setTranscriptError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`/api/admin/applications/${id}`)
@@ -105,6 +127,103 @@ export default function CandidatePage({ params }: { params: Promise<{ id: string
         setLoading(false);
       });
   }, [id]);
+
+  const showNotetakerSection =
+    app?.status === "in_interview" || app?.status === "offer";
+
+  useEffect(() => {
+    if (!showNotetakerSection || !id) return;
+    setTranscriptsLoading(true);
+    fetch(`/api/admin/applications/${id}/interview-transcript`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data)) setInterviewTranscripts(data);
+      })
+      .catch(() => setInterviewTranscripts([]))
+      .finally(() => setTranscriptsLoading(false));
+  }, [id, showNotetakerSection, app?.status]);
+
+  async function refreshTranscripts() {
+    if (!id) return;
+    const r = await fetch(`/api/admin/applications/${id}/interview-transcript`);
+    const data = await r.json();
+    if (Array.isArray(data)) setInterviewTranscripts(data);
+  }
+
+  async function importAssemblyFromUrl() {
+    if (!app) return;
+    setTranscriptImporting(true);
+    setTranscriptError(null);
+    const res = await fetch(`/api/admin/applications/${app.id}/interview-transcript`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ assemblyAudioUrl: assemblyAudioUrl.trim() }),
+    });
+    const body = await res.json();
+    setTranscriptImporting(false);
+    if (res.ok) {
+      setAssemblyAudioUrl("");
+      await refreshTranscripts();
+    } else {
+      setTranscriptError(body.error ?? "Transcription failed");
+    }
+  }
+
+  async function importAssemblyFromFile(file: File) {
+    if (!app) return;
+    setTranscriptImporting(true);
+    setTranscriptError(null);
+    const fd = new FormData();
+    fd.set("file", file);
+    const res = await fetch(
+      `/api/admin/applications/${app.id}/interview-transcript/assembly`,
+      { method: "POST", body: fd }
+    );
+    const body = await res.json();
+    setTranscriptImporting(false);
+    if (res.ok) {
+      await refreshTranscripts();
+    } else {
+      setTranscriptError(body.error ?? "Upload failed");
+    }
+  }
+
+  async function importFirefliesTranscript() {
+    if (!app) return;
+    setTranscriptImporting(true);
+    setTranscriptError(null);
+    const res = await fetch(`/api/admin/applications/${app.id}/interview-transcript`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ firefliesTranscriptId: firefliesTranscriptId.trim() }),
+    });
+    const body = await res.json();
+    setTranscriptImporting(false);
+    if (res.ok) {
+      setFirefliesTranscriptId("");
+      await refreshTranscripts();
+    } else {
+      setTranscriptError(body.error ?? "Import failed");
+    }
+  }
+
+  async function importMockTranscript() {
+    if (!app) return;
+    setTranscriptImporting(true);
+    setTranscriptError(null);
+    const res = await fetch(`/api/admin/applications/${app.id}/interview-transcript`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ useMock: true }),
+    });
+    const body = await res.json();
+    setTranscriptImporting(false);
+    if (res.ok) {
+      await refreshTranscripts();
+    } else {
+      setTranscriptError(body.error ?? "Mock import failed");
+    }
+  }
 
   async function handleOverride(e: React.FormEvent) {
     e.preventDefault();
@@ -318,11 +437,39 @@ export default function CandidatePage({ params }: { params: Promise<{ id: string
               <h2 className="text-base font-semibold text-slate-900 mb-4">Interview Scheduling</h2>
 
               {app.status === "in_interview" ? (
-                <div className="flex items-center gap-3 text-sm text-emerald-700 bg-emerald-50 rounded-xl px-4 py-3">
-                  <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                  Interview confirmed — candidate selected a slot.
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3 text-sm text-emerald-700 bg-emerald-50 rounded-xl px-4 py-3">
+                    <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Interview confirmed — candidate selected a slot. Google Calendar invite sent; RSVP is synced from
+                    Calendar (not email).
+                  </div>
+                  {app.confirmed_interview_slot && (
+                    <div className="text-xs text-slate-600 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                      <p className="font-semibold text-slate-700 mb-1">Calendar invite (candidate)</p>
+                      <p>
+                        RSVP:{" "}
+                        <span className="font-medium">
+                          {app.confirmed_interview_slot.calendar_candidate_rsvp === "accepted"
+                            ? "Accepted (Yes)"
+                            : app.confirmed_interview_slot.calendar_candidate_rsvp === "declined"
+                              ? "Declined"
+                              : app.confirmed_interview_slot.calendar_candidate_rsvp === "tentative"
+                                ? "Maybe"
+                                : app.confirmed_interview_slot.calendar_candidate_rsvp === "needs_action"
+                                  ? "Awaiting response in Google Calendar"
+                                  : "Pending sync"}
+                        </span>
+                      </p>
+                      {app.confirmed_interview_slot.calendar_rsvp_synced_at && (
+                        <p className="text-slate-400 mt-1">
+                          Last checked:{" "}
+                          {new Date(app.confirmed_interview_slot.calendar_rsvp_synced_at).toLocaleString()}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               ) : scheduleSent || app.status === "scheduling_sent" ? (
                 <div className="space-y-3">
@@ -357,6 +504,158 @@ export default function CandidatePage({ params }: { params: Promise<{ id: string
                   >
                     {sendingSchedule ? "Finding slots & sending…" : "Send scheduling options"}
                   </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Phase 04 — AI notetaker / transcript */}
+          {showNotetakerSection && (
+            <div className="bg-white rounded-2xl border border-slate-200 p-6">
+              <h2 className="text-base font-semibold text-slate-900 mb-1">Interview transcript &amp; notes</h2>
+              <p className="text-xs text-slate-500 mb-4">
+                Recommended:{" "}
+                <a
+                  href="https://www.assemblyai.com/dashboard"
+                  className="text-indigo-600 hover:underline"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  AssemblyAI
+                </a>{" "}
+                (free developer credits) — paste a <strong>public</strong> recording URL (HTTPS). Optional: small file
+                upload (≤4 MB; larger files use a URL). Alternatives:{" "}
+                <a
+                  href="https://docs.fireflies.ai/graphql-api/query/transcript"
+                  className="text-indigo-600 hover:underline"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Fireflies
+                </a>{" "}
+                (often paid API) or mock for demos. See{" "}
+                <code className="text-slate-600">docs/phase-04-notetaker.md</code>.
+              </p>
+
+              <div className="space-y-3 mb-4">
+                <div className="flex flex-wrap gap-2 items-center">
+                  <input
+                    type="url"
+                    value={assemblyAudioUrl}
+                    onChange={(e) => setAssemblyAudioUrl(e.target.value)}
+                    placeholder="https://… (public audio / video URL)"
+                    className="flex-1 min-w-[220px] rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={importAssemblyFromUrl}
+                    disabled={transcriptImporting || !assemblyAudioUrl.trim()}
+                    className="rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-semibold px-4 py-2"
+                  >
+                    {transcriptImporting ? "Transcribing…" : "Transcribe (free tier)"}
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-2 items-center text-xs text-slate-500">
+                  <label className="inline-flex items-center gap-2 cursor-pointer">
+                    <span className="text-slate-600">Or upload small file</span>
+                    <input
+                      type="file"
+                      accept="audio/*,video/*,.mp3,.m4a,.wav,.webm,.mp4"
+                      disabled={transcriptImporting}
+                      className="text-sm text-slate-700 file:mr-2 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        e.target.value = "";
+                        if (f) void importAssemblyFromFile(f);
+                      }}
+                    />
+                  </label>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    type="text"
+                    value={firefliesTranscriptId}
+                    onChange={(e) => setFirefliesTranscriptId(e.target.value)}
+                    placeholder="Fireflies transcript ID"
+                    className="flex-1 min-w-[200px] rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={importFirefliesTranscript}
+                    disabled={transcriptImporting || !firefliesTranscriptId.trim()}
+                    className="rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-semibold px-4 py-2"
+                  >
+                    {transcriptImporting ? "Importing…" : "Import from Fireflies"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={importMockTranscript}
+                    disabled={transcriptImporting}
+                    className="rounded-xl border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-slate-800 text-sm font-semibold px-4 py-2"
+                  >
+                    Load mock transcript
+                  </button>
+                </div>
+              </div>
+              {transcriptError && (
+                <div className="rounded-xl bg-red-50 border border-red-100 px-4 py-2 text-sm text-red-700 mb-4">
+                  {transcriptError}
+                </div>
+              )}
+
+              {transcriptsLoading ? (
+                <p className="text-sm text-slate-400">Loading transcripts…</p>
+              ) : interviewTranscripts.length === 0 ? (
+                <p className="text-sm text-slate-400">No transcript stored yet.</p>
+              ) : (
+                <div className="space-y-4">
+                  {interviewTranscripts.map((t) => (
+                    <div
+                      key={t.id}
+                      className="rounded-xl border border-slate-100 bg-slate-50 p-4 text-sm space-y-2"
+                    >
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                        <span className="font-semibold text-slate-700">
+                          {t.title ?? "Interview"}
+                        </span>
+                        <span className="rounded-full bg-white border border-slate-200 px-2 py-0.5">
+                          {t.provider}
+                        </span>
+                        {t.external_id && <span className="font-mono truncate max-w-[12rem]">{t.external_id}</span>}
+                        <span>{formatDate(t.created_at)}</span>
+                      </div>
+                      {t.summary && (
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-1">
+                            Summary
+                          </p>
+                          <p className="text-slate-700 whitespace-pre-wrap">{t.summary}</p>
+                        </div>
+                      )}
+                      {Array.isArray(t.action_items) && t.action_items.length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-1">
+                            Action items
+                          </p>
+                          <ul className="list-disc pl-4 text-slate-700">
+                            {(t.action_items as string[]).map((item, i) => (
+                              <li key={i}>{typeof item === "string" ? item : JSON.stringify(item)}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {t.transcript && (
+                        <details className="text-slate-600">
+                          <summary className="cursor-pointer text-indigo-600 font-medium">
+                            Full transcript
+                          </summary>
+                          <pre className="mt-2 whitespace-pre-wrap text-xs bg-white border border-slate-100 rounded-lg p-3 max-h-64 overflow-y-auto">
+                            {t.transcript}
+                          </pre>
+                        </details>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
