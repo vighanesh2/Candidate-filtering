@@ -32,6 +32,12 @@ export type OfferLetterRow = {
   /** Typed full legal name or data-URL PNG for drawn signature */
   signature_captured: string | null;
   signer_user_agent: string | null;
+  slack_invite_sent_at: string | null;
+  slack_invite_method: "admin_api" | "email_link" | "both" | null;
+  slack_user_id: string | null;
+  slack_welcome_sent_at: string | null;
+  slack_welcome_message: string | null;
+  slack_hr_notified_at: string | null;
 };
 
 export function mapOfferLetterRowFromDb(data: Record<string, unknown>): OfferLetterRow {
@@ -54,6 +60,17 @@ export function mapOfferLetterRowFromDb(data: Record<string, unknown>): OfferLet
     signature_method: sigMethod,
     signature_captured: (data.signature_captured as string) ?? null,
     signer_user_agent: (data.signer_user_agent as string) ?? null,
+    slack_invite_sent_at: (data.slack_invite_sent_at as string) ?? null,
+    slack_invite_method:
+      data.slack_invite_method === "admin_api" ||
+      data.slack_invite_method === "email_link" ||
+      data.slack_invite_method === "both"
+        ? data.slack_invite_method
+        : null,
+    slack_user_id: (data.slack_user_id as string) ?? null,
+    slack_welcome_sent_at: (data.slack_welcome_sent_at as string) ?? null,
+    slack_welcome_message: (data.slack_welcome_message as string) ?? null,
+    slack_hr_notified_at: (data.slack_hr_notified_at as string) ?? null,
   };
 }
 

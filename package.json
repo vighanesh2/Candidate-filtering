@@ -12,6 +12,7 @@
     "@anthropic-ai/sdk": "^0.82.0",
     "@supabase/supabase-js": "^2.101.1",
     "@tavily/core": "^0.7.2",
+    "@vercel/functions": "^2.2.13",
     "assemblyai": "^4.29.0",
     "googleapis": "^171.4.0",
     "mammoth": "^1.12.0",

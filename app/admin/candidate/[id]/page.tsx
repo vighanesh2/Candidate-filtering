@@ -153,6 +153,10 @@ export default function CandidatePage({ params }: { params: Promise<{ id: string
   const [offerSignatureCaptured, setOfferSignatureCaptured] = useState<string | null>(null);
   const [offerSigningToken, setOfferSigningToken] = useState<string | null>(null);
   const [sendingSignLink, setSendingSignLink] = useState(false);
+  const [slackInviteSentAt, setSlackInviteSentAt] = useState<string | null>(null);
+  const [slackInviteMethod, setSlackInviteMethod] = useState<string | null>(null);
+  const [slackWelcomeSentAt, setSlackWelcomeSentAt] = useState<string | null>(null);
+  const [slackHrNotifiedAt, setSlackHrNotifiedAt] = useState<string | null>(null);
 
   function resetOfferFormToDefaults(defaultTitle: string) {
     setOfferForm({ ...emptyOfferForm(), job_title: defaultTitle });
@@ -164,6 +168,10 @@ export default function CandidatePage({ params }: { params: Promise<{ id: string
     setOfferSignatureMethod(null);
     setOfferSignatureCaptured(null);
     setOfferSigningToken(null);
+    setSlackInviteSentAt(null);
+    setSlackInviteMethod(null);
+    setSlackWelcomeSentAt(null);
+    setSlackHrNotifiedAt(null);
   }
 
   function applyOfferBackendRow(row: Record<string, unknown> | null, defaultTitle: string) {
@@ -201,6 +209,16 @@ export default function CandidatePage({ params }: { params: Promise<{ id: string
       typeof row.signature_captured === "string" ? row.signature_captured : null
     );
     setOfferSigningToken(typeof row.signing_token === "string" ? row.signing_token : null);
+    setSlackInviteSentAt(typeof row.slack_invite_sent_at === "string" ? row.slack_invite_sent_at : null);
+    setSlackInviteMethod(
+      row.slack_invite_method === "admin_api" ||
+        row.slack_invite_method === "email_link" ||
+        row.slack_invite_method === "both"
+        ? row.slack_invite_method
+        : null
+    );
+    setSlackWelcomeSentAt(typeof row.slack_welcome_sent_at === "string" ? row.slack_welcome_sent_at : null);
+    setSlackHrNotifiedAt(typeof row.slack_hr_notified_at === "string" ? row.slack_hr_notified_at : null);
   }
 
   useEffect(() => {
@@ -766,6 +784,23 @@ export default function CandidatePage({ params }: { params: Promise<{ id: string
                   )}
                   {offerSignatureMethod === "typed" && offerSignatureCaptured && (
                     <p className="text-sm font-medium text-emerald-950 mt-1">“{offerSignatureCaptured}”</p>
+                  )}
+                  {(slackInviteSentAt || slackWelcomeSentAt || slackHrNotifiedAt) && (
+                    <div className="mt-3 pt-3 border-t border-emerald-200/80 text-xs text-emerald-900 space-y-1">
+                      <p className="font-semibold text-emerald-950">Slack onboarding (Phase 06)</p>
+                      {slackInviteSentAt && (
+                        <p>
+                          Workspace invite email sent {new Date(slackInviteSentAt).toLocaleString()}
+                          {slackInviteMethod ? ` · ${slackInviteMethod.replace(/_/g, " ")}` : ""}
+                        </p>
+                      )}
+                      {slackWelcomeSentAt && (
+                        <p>Welcome DM sent {new Date(slackWelcomeSentAt).toLocaleString()}</p>
+                      )}
+                      {slackHrNotifiedAt && (
+                        <p>HR channel notified {new Date(slackHrNotifiedAt).toLocaleString()}</p>
+                      )}
+                    </div>
                   )}
                 </div>
               )}

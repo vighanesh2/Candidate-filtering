@@ -3,6 +3,8 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { jobs } from "@/lib/jobs";
 import type { StatusHistoryEntry } from "@/lib/screen";
 import { getRequestClientIp, sendOfferSignedAlertEmails } from "@/lib/offer-signing";
+import { kickOffSlackOnboardingAfterOfferSigned } from "@/lib/slack-onboarding";
+import type { OfferLetterQuestionnaire } from "@/lib/offer-letter";
 
 const MAX_CAPTURE_LEN = 600_000;
 
@@ -106,7 +108,7 @@ export async function POST(
 
   const { data: offerRow, error: fetchErr } = await supabaseAdmin
     .from("offer_letters")
-    .select("id, application_id, signed_at")
+    .select("id, application_id, signed_at, questionnaire")
     .eq("signing_token", token.trim())
     .maybeSingle();
 
@@ -171,6 +173,17 @@ export async function POST(
       signerIp: ip,
       signatureMethod: method,
     }).catch((err) => console.error("[offer-signing] alert email:", err));
+
+    const questionnaire = offerRow.questionnaire as OfferLetterQuestionnaire | undefined;
+    if (questionnaire) {
+      void kickOffSlackOnboardingAfterOfferSigned({
+        applicationId: app.id as string,
+        candidateEmail: app.email as string,
+        fullName: app.full_name as string,
+        roleId: app.role_id as string,
+        questionnaire,
+      }).catch((err) => console.error("[slack] kickoff after sign:", err));
+    }
   }
 
   return NextResponse.json({ success: true, signedAt });
