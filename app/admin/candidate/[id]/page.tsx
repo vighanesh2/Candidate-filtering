@@ -118,6 +118,91 @@ export default function CandidatePage({ params }: { params: Promise<{ id: string
   const [transcriptImporting, setTranscriptImporting] = useState(false);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
 
+  type OfferQuestionnaireForm = {
+    job_title: string;
+    start_date: string;
+    base_salary: string;
+    compensation_structure: string;
+    equity_bonus: string;
+    reporting_manager: string;
+    custom_terms: string;
+  };
+
+  const emptyOfferForm = (): OfferQuestionnaireForm => ({
+    job_title: "",
+    start_date: "",
+    base_salary: "",
+    compensation_structure: "",
+    equity_bonus: "",
+    reporting_manager: "",
+    custom_terms: "",
+  });
+
+  const [offerForm, setOfferForm] = useState<OfferQuestionnaireForm>(emptyOfferForm);
+  const [offerDraft, setOfferDraft] = useState("");
+  const [offerReviewStatus, setOfferReviewStatus] = useState<"draft" | "approved" | "sent">("draft");
+  const [offerFetchLoading, setOfferFetchLoading] = useState(false);
+  const [offerGenerating, setOfferGenerating] = useState(false);
+  const [offerSaving, setOfferSaving] = useState(false);
+  const [offerError, setOfferError] = useState<string | null>(null);
+  const [offerSignMessage, setOfferSignMessage] = useState<string | null>(null);
+  const [offerSignedAt, setOfferSignedAt] = useState<string | null>(null);
+  const [offerSigningEmailSentAt, setOfferSigningEmailSentAt] = useState<string | null>(null);
+  const [offerSignerIp, setOfferSignerIp] = useState<string | null>(null);
+  const [offerSignatureMethod, setOfferSignatureMethod] = useState<string | null>(null);
+  const [offerSignatureCaptured, setOfferSignatureCaptured] = useState<string | null>(null);
+  const [offerSigningToken, setOfferSigningToken] = useState<string | null>(null);
+  const [sendingSignLink, setSendingSignLink] = useState(false);
+
+  function resetOfferFormToDefaults(defaultTitle: string) {
+    setOfferForm({ ...emptyOfferForm(), job_title: defaultTitle });
+    setOfferDraft("");
+    setOfferReviewStatus("draft");
+    setOfferSignedAt(null);
+    setOfferSigningEmailSentAt(null);
+    setOfferSignerIp(null);
+    setOfferSignatureMethod(null);
+    setOfferSignatureCaptured(null);
+    setOfferSigningToken(null);
+  }
+
+  function applyOfferBackendRow(row: Record<string, unknown> | null, defaultTitle: string) {
+    if (!row || typeof row !== "object" || !row.questionnaire) {
+      resetOfferFormToDefaults(defaultTitle);
+      return;
+    }
+    const q = row.questionnaire as OfferQuestionnaireForm;
+    setOfferForm({
+      job_title: q.job_title ?? "",
+      start_date: q.start_date ?? "",
+      base_salary: q.base_salary ?? "",
+      compensation_structure: q.compensation_structure ?? "",
+      equity_bonus: q.equity_bonus ?? "",
+      reporting_manager: q.reporting_manager ?? "",
+      custom_terms: q.custom_terms ?? "",
+    });
+    setOfferDraft(typeof row.draft_body === "string" ? row.draft_body : "");
+    if (row.review_status === "approved" || row.review_status === "sent") {
+      setOfferReviewStatus(row.review_status as "approved" | "sent");
+    } else {
+      setOfferReviewStatus("draft");
+    }
+    setOfferSignedAt(typeof row.signed_at === "string" ? row.signed_at : null);
+    setOfferSigningEmailSentAt(
+      typeof row.signing_email_sent_at === "string" ? row.signing_email_sent_at : null
+    );
+    setOfferSignerIp(typeof row.signer_ip === "string" ? row.signer_ip : null);
+    setOfferSignatureMethod(
+      row.signature_method === "typed" || row.signature_method === "drawn"
+        ? row.signature_method
+        : null
+    );
+    setOfferSignatureCaptured(
+      typeof row.signature_captured === "string" ? row.signature_captured : null
+    );
+    setOfferSigningToken(typeof row.signing_token === "string" ? row.signing_token : null);
+  }
+
   useEffect(() => {
     fetch(`/api/admin/applications/${id}`)
       .then((r) => r.json())
@@ -130,6 +215,25 @@ export default function CandidatePage({ params }: { params: Promise<{ id: string
 
   const showNotetakerSection =
     app?.status === "in_interview" || app?.status === "offer";
+
+  const showOfferLetterSection =
+    app?.status === "in_interview" || app?.status === "offer";
+
+  useEffect(() => {
+    if (!showOfferLetterSection || !id || !app) return;
+    setOfferFetchLoading(true);
+    setOfferError(null);
+    const job = jobs.find((j) => j.id === app.role_id);
+    const defaultTitle = job?.title ?? "";
+
+    fetch(`/api/admin/applications/${id}/offer-letter`)
+      .then((r) => r.json())
+      .then((row) => {
+        applyOfferBackendRow(row, defaultTitle);
+      })
+      .catch(() => {})
+      .finally(() => setOfferFetchLoading(false));
+  }, [id, showOfferLetterSection, app?.id, app?.role_id]);
 
   useEffect(() => {
     if (!showNotetakerSection || !id) return;
@@ -223,6 +327,104 @@ export default function CandidatePage({ params }: { params: Promise<{ id: string
     } else {
       setTranscriptError(body.error ?? "Mock import failed");
     }
+  }
+
+  async function generateOfferLetter() {
+    if (!app) return;
+    setOfferGenerating(true);
+    setOfferError(null);
+    setOfferSignMessage(null);
+    const res = await fetch(`/api/admin/applications/${app.id}/offer-letter/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(offerForm),
+    });
+    const body = await res.json();
+    setOfferGenerating(false);
+    if (res.ok && body.offerLetter) {
+      const job = jobs.find((j) => j.id === app.role_id);
+      applyOfferBackendRow(body.offerLetter as Record<string, unknown>, job?.title ?? "");
+    } else {
+      setOfferError(body.error ?? "Could not generate offer letter");
+    }
+  }
+
+  async function saveOfferDraftEdits() {
+    if (!app) return;
+    setOfferSaving(true);
+    setOfferError(null);
+    setOfferSignMessage(null);
+    const res = await fetch(`/api/admin/applications/${app.id}/offer-letter`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ draft_body: offerDraft }),
+    });
+    const body = await res.json();
+    setOfferSaving(false);
+    if (res.ok && body.draft_body !== undefined) {
+      const job = jobs.find((j) => j.id === app.role_id);
+      applyOfferBackendRow(body as Record<string, unknown>, job?.title ?? "");
+      setOfferSignMessage("Draft saved.");
+    } else if (!res.ok) {
+      setOfferError(body.error ?? "Save failed");
+    }
+  }
+
+  async function markOfferApproved() {
+    if (!app) return;
+    setOfferSaving(true);
+    setOfferError(null);
+    setOfferSignMessage(null);
+    const res = await fetch(`/api/admin/applications/${app.id}/offer-letter`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ review_status: "approved" }),
+    });
+    const body = await res.json();
+    setOfferSaving(false);
+    if (res.ok && body.review_status) {
+      const job = jobs.find((j) => j.id === app.role_id);
+      applyOfferBackendRow(body as Record<string, unknown>, job?.title ?? "");
+      setOfferSignMessage("Marked approved — you can email the signing link next.");
+    } else {
+      setOfferError(body.error ?? "Could not update status");
+    }
+  }
+
+  async function sendOfferSigningLink() {
+    if (!app) return;
+    setSendingSignLink(true);
+    setOfferError(null);
+    setOfferSignMessage(null);
+    const res = await fetch(
+      `/api/admin/applications/${app.id}/offer-letter/send-for-signature`,
+      { method: "POST" }
+    );
+    const body = await res.json();
+    setSendingSignLink(false);
+    const job = jobs.find((j) => j.id === app.role_id);
+    if (body.offerLetter) {
+      applyOfferBackendRow(body.offerLetter as Record<string, unknown>, job?.title ?? "");
+    }
+    if (res.ok) {
+      setOfferSignMessage(
+        body.signingUrl
+          ? `Signing link emailed to candidate. Copy if needed: ${body.signingUrl}`
+          : "Signing link emailed to candidate."
+      );
+    } else {
+      setOfferError(body.error ?? "Could not send signing link");
+      if (body.signingUrl) {
+        setOfferSignMessage(`Link (email may have failed): ${body.signingUrl}`);
+      }
+    }
+  }
+
+  function copyOfferSigningLink() {
+    const base = (process.env.NEXT_PUBLIC_BASE_URL ?? window.location.origin).replace(/\/$/, "");
+    if (!offerSigningToken) return;
+    void navigator.clipboard.writeText(`${base}/offer/sign/${offerSigningToken}`);
+    setOfferSignMessage("Signing link copied to clipboard.");
   }
 
   async function handleOverride(e: React.FormEvent) {
@@ -350,9 +552,16 @@ export default function CandidatePage({ params }: { params: Promise<{ id: string
                 <p className="text-sm text-slate-400 mt-1">Applied {formatDate(app.created_at)}</p>
               </div>
               <div className="flex flex-col items-end gap-2">
-                <span className={`text-xs font-semibold px-3 py-1 rounded-full ${STATUS_COLORS[app.status] ?? "bg-slate-100 text-slate-500"}`}>
-                  {STATUS_OPTIONS.find((s) => s.value === app.status)?.label ?? app.status}
-                </span>
+                <div className="flex flex-wrap gap-2 justify-end">
+                  <span className={`text-xs font-semibold px-3 py-1 rounded-full ${STATUS_COLORS[app.status] ?? "bg-slate-100 text-slate-500"}`}>
+                    {STATUS_OPTIONS.find((s) => s.value === app.status)?.label ?? app.status}
+                  </span>
+                  {offerSignedAt && (
+                    <span className="text-xs font-semibold px-3 py-1 rounded-full bg-emerald-100 text-emerald-800">
+                      Offer e-signed
+                    </span>
+                  )}
+                </div>
                 {job && <p className="text-sm text-slate-500">{job.title} — {job.team}</p>}
               </div>
             </div>
@@ -506,6 +715,223 @@ export default function CandidatePage({ params }: { params: Promise<{ id: string
                   </button>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Phase 5A — AI offer letter (human review before send) */}
+          {showOfferLetterSection && (
+            <div className="bg-white rounded-2xl border border-amber-200 p-6">
+              <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+                <div>
+                  <h2 className="text-base font-semibold text-slate-900">Offer letter (AI draft)</h2>
+                  <p className="text-xs text-slate-500 mt-1 max-w-xl">
+                    Phase 5B uses an <strong>in-app</strong> signing portal (no DocuSign). After approval, email the
+                    candidate a personal link; on sign we store timestamp, IP, and signature and alert the interviewer.
+                    Set <code className="text-slate-600">OFFER_SIGN_ALERT_EMAIL</code> for extra alert recipients.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2 justify-end">
+                  {offerSignedAt && (
+                    <span className="text-xs font-semibold px-3 py-1 rounded-full bg-emerald-100 text-emerald-800">
+                      Offer signed
+                    </span>
+                  )}
+                  {offerReviewStatus === "approved" && !offerSignedAt && (
+                    <span className="text-xs font-semibold px-3 py-1 rounded-full bg-amber-100 text-amber-800">
+                      Approved for send
+                    </span>
+                  )}
+                  {offerReviewStatus === "sent" && !offerSignedAt && (
+                    <span className="text-xs font-semibold px-3 py-1 rounded-full bg-sky-100 text-sky-800">
+                      Awaiting signature
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {offerSignedAt && (
+                <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 mb-4 space-y-2">
+                  <p className="font-semibold">Signature on file</p>
+                  <p className="text-xs text-emerald-800">
+                    Signed {new Date(offerSignedAt).toLocaleString()}
+                    {offerSignerIp ? ` · IP ${offerSignerIp}` : ""}
+                    {offerSignatureMethod ? ` · ${offerSignatureMethod === "typed" ? "Typed name" : "Drawn"}` : ""}
+                  </p>
+                  {offerSignatureMethod === "drawn" && offerSignatureCaptured?.startsWith("data:image") && (
+                    <img
+                      src={offerSignatureCaptured}
+                      alt="Candidate signature"
+                      className="max-h-24 border border-emerald-200 rounded-lg bg-white mt-2"
+                    />
+                  )}
+                  {offerSignatureMethod === "typed" && offerSignatureCaptured && (
+                    <p className="text-sm font-medium text-emerald-950 mt-1">“{offerSignatureCaptured}”</p>
+                  )}
+                </div>
+              )}
+
+              {offerFetchLoading && (
+                <p className="text-sm text-slate-400 mb-4">Loading saved offer letter…</p>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <label className="block text-sm">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Confirmed job title</span>
+                  <input
+                    value={offerForm.job_title}
+                    onChange={(e) => setOfferForm((f) => ({ ...f, job_title: e.target.value }))}
+                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </label>
+                <label className="block text-sm">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Start date</span>
+                  <input
+                    value={offerForm.start_date}
+                    onChange={(e) => setOfferForm((f) => ({ ...f, start_date: e.target.value }))}
+                    placeholder="e.g. May 1, 2026"
+                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </label>
+                <label className="block text-sm md:col-span-2">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Base salary</span>
+                  <input
+                    value={offerForm.base_salary}
+                    onChange={(e) => setOfferForm((f) => ({ ...f, base_salary: e.target.value }))}
+                    placeholder="e.g. $180,000 USD annually"
+                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </label>
+                <label className="block text-sm md:col-span-2">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                    Compensation structure
+                  </span>
+                  <textarea
+                    value={offerForm.compensation_structure}
+                    onChange={(e) => setOfferForm((f) => ({ ...f, compensation_structure: e.target.value }))}
+                    placeholder="Pay frequency, overtime, benefits summary, etc."
+                    rows={2}
+                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-amber-500 resize-y min-h-[3rem]"
+                  />
+                </label>
+                <label className="block text-sm md:col-span-2">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                    Equity or bonus (optional)
+                  </span>
+                  <textarea
+                    value={offerForm.equity_bonus}
+                    onChange={(e) => setOfferForm((f) => ({ ...f, equity_bonus: e.target.value }))}
+                    placeholder="RSUs, options, signing bonus, performance bonus…"
+                    rows={2}
+                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-amber-500 resize-y min-h-[3rem]"
+                  />
+                </label>
+                <label className="block text-sm md:col-span-2">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Reporting manager</span>
+                  <input
+                    value={offerForm.reporting_manager}
+                    onChange={(e) => setOfferForm((f) => ({ ...f, reporting_manager: e.target.value }))}
+                    placeholder="Name and title"
+                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </label>
+                <label className="block text-sm md:col-span-2">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                    Custom terms (optional)
+                  </span>
+                  <textarea
+                    value={offerForm.custom_terms}
+                    onChange={(e) => setOfferForm((f) => ({ ...f, custom_terms: e.target.value }))}
+                    placeholder="Relocation, probation, IP, non-compete, or other candidate-specific terms…"
+                    rows={3}
+                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-amber-500 resize-y min-h-[4rem]"
+                  />
+                </label>
+              </div>
+
+              <div className="flex flex-wrap gap-2 mb-4">
+                <button
+                  type="button"
+                  onClick={() => void generateOfferLetter()}
+                  disabled={offerGenerating || !!offerSignedAt}
+                  className="rounded-xl bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-sm font-semibold px-4 py-2"
+                >
+                  {offerGenerating ? "Generating…" : "Generate offer letter"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void saveOfferDraftEdits()}
+                  disabled={offerSaving || !offerDraft.trim() || !!offerSignedAt}
+                  className="rounded-xl border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-slate-800 text-sm font-semibold px-4 py-2"
+                >
+                  {offerSaving ? "Saving…" : "Save draft edits"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void markOfferApproved()}
+                  disabled={
+                    offerSaving ||
+                    !offerDraft.trim() ||
+                    offerReviewStatus === "approved" ||
+                    offerReviewStatus === "sent" ||
+                    !!offerSignedAt
+                  }
+                  className="rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 disabled:opacity-50 text-amber-900 text-sm font-semibold px-4 py-2"
+                >
+                  Mark approved for send
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void sendOfferSigningLink()}
+                  disabled={
+                    sendingSignLink ||
+                    !!offerSignedAt ||
+                    !offerDraft.trim() ||
+                    (offerReviewStatus !== "approved" && offerReviewStatus !== "sent")
+                  }
+                  className="rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-sm font-semibold px-4 py-2"
+                >
+                  {sendingSignLink ? "Sending…" : offerSigningEmailSentAt ? "Resend signing email" : "Email signing link"}
+                </button>
+                <button
+                  type="button"
+                  onClick={copyOfferSigningLink}
+                  disabled={!offerSigningToken || !!offerSignedAt}
+                  className="rounded-xl border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-slate-800 text-sm font-semibold px-4 py-2"
+                >
+                  Copy signing link
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void navigator.clipboard.writeText(offerDraft)}
+                  disabled={!offerDraft.trim()}
+                  className="rounded-xl text-slate-500 hover:text-slate-700 text-sm font-medium px-3 py-2 disabled:opacity-50"
+                >
+                  Copy letter
+                </button>
+              </div>
+
+              {offerSignMessage && (
+                <div className="rounded-xl bg-emerald-50 border border-emerald-100 px-4 py-2 text-sm text-emerald-800 mb-4 break-all">
+                  {offerSignMessage}
+                </div>
+              )}
+
+              {offerError && (
+                <div className="rounded-xl bg-red-50 border border-red-100 px-4 py-2 text-sm text-red-700 mb-4">
+                  {offerError}
+                </div>
+              )}
+
+              <label className="block">
+                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Draft (editable)</span>
+                <textarea
+                  value={offerDraft}
+                  onChange={(e) => setOfferDraft(e.target.value)}
+                  rows={18}
+                  placeholder="Generated letter appears here. Edit before sending to the candidate."
+                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 font-mono outline-none focus:ring-2 focus:ring-amber-500 resize-y min-h-[12rem]"
+                />
+              </label>
             </div>
           )}
 

@@ -2,14 +2,24 @@
  * Claude via Anthropic (direct) or Lava forward.
  * Lava runs on a short serverless limit and often returns 504 FUNCTION_INVOCATION_TIMEOUT
  * on long research prompts — set ANTHROPIC_API_KEY to call Anthropic directly.
+ *
+ * Lava only accepts models in their gateway catalog; set LAVA_ANTHROPIC_MODEL if the default
+ * (claude-haiku-4-5) is wrong for your account.
  */
 
 const ANTHROPIC_MESSAGES = "https://api.anthropic.com/v1/messages";
 const LAVA_URL =
   "https://api.lavapayments.com/v1/forward?u=https://api.anthropic.com/v1/messages";
 
-/** Public Anthropic model id (Lava-specific ids like claude-sonnet-4-6 are replaced when using direct API). */
+/** Model id for direct Anthropic API (see Anthropic docs). */
 const DEFAULT_DIRECT_MODEL = "claude-sonnet-4-20250514";
+
+/**
+ * Default when using Lava forward — must match Lava's gateway catalog (not arbitrary Anthropic ids).
+ * @see https://lava.so/docs/gateway/forward-proxy.md (Anthropic example uses claude-haiku-4-5)
+ * Override with LAVA_ANTHROPIC_MODEL (e.g. claude-opus-4-0, claude-haiku-4-5-20251001).
+ */
+const DEFAULT_LAVA_ANTHROPIC_MODEL = "claude-haiku-4-5";
 
 function parseResponse(data: unknown): string {
   const d = data as { content?: { text?: string }[] };
@@ -52,6 +62,11 @@ export async function callAnthropicMessages(body: Record<string, unknown>): Prom
     );
   }
 
+  // Lava validates `model` against its allowlist; legacy aliases like claude-sonnet-4-6 fail with forward_model_invalid.
+  const lavaModel =
+    process.env.LAVA_ANTHROPIC_MODEL?.trim() || DEFAULT_LAVA_ANTHROPIC_MODEL;
+  const payload = { ...body, model: lavaModel };
+
   const res = await fetch(LAVA_URL, {
     method: "POST",
     headers: {
@@ -59,7 +74,7 @@ export async function callAnthropicMessages(body: Record<string, unknown>): Prom
       "Content-Type": "application/json",
       "anthropic-version": "2023-06-01",
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
     signal: AbortSignal.timeout(timeoutMs),
   });
 
