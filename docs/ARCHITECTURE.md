@@ -140,4 +140,4 @@ See **[TRADEOFFS.md](./TRADEOFFS.md)** for documented simplifications (custom e-
 
 ---
 
-*Last updated to match the repository layout as of the doc author’s pass; adjust env names in deployment dashboards to match `README.md`.*
+*Last updated  to match the repository layout as of the doc author’s pass; adjust env names in deployment dashboards to match `README.md`.*
