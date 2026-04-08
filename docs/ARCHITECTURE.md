@@ -130,4 +130,10 @@ This document describes the **Candidate Filtering** / hiring pipeline app: stack
 
 ---
 
+## Edge cases
+
+See **[EDGE_CASES.md](./EDGE_CASES.md)** for a concise write-up of the top five production edge cases (duplicate applications, closed roles, scheduling races, offer signing, Slack welcome deduplication).
+
+---
+
 *Last updated to match the repository layout as of the doc author’s pass; adjust env names in deployment dashboards to match `README.md`.*

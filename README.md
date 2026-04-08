@@ -50,6 +50,7 @@ Open [http://localhost:3000](http://localhost:3000) for the careers site; `/admi
 ## Documentation
 
 - **[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)** — Stack, AI tools, how each integration works, and improvement ideas.
+- **[docs/EDGE_CASES.md](./docs/EDGE_CASES.md)** — **Edge case documentation:** the top five edge cases the app handles explicitly (duplicates, closed roles, scheduling races, offer-sign idempotency, Slack welcome deduplication), plus a short “honorable mentions” list.
 
 ## License
 
