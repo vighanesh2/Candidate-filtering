@@ -1,36 +1,56 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Candidate filtering (hiring pipeline)
 
-## Getting Started
+A **Next.js** app for job postings, applications, AI-assisted resume screening and research, interview scheduling with **Google Calendar**, in-app **offer signing**, and **Slack** onboarding after an offer is signed.
 
-First, run the development server:
+For a full **tech stack, AI usage, integrations, and roadmap-style improvements**, see **[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)**.
+
+## Requirements
+
+- Node.js 20+ (recommended)
+- Supabase project (Postgres + Storage)
+- API keys for features you enable (Anthropic and/or Lava, Tavily, Resend, Google OAuth for Calendar, Slack app, etc.)
+
+## Local setup
+
+```bash
+npm install
+# Create .env.local at the repo root (see docs/ARCHITECTURE.md for variable names).
+```
+
+Set at minimum (names only — values are yours):
+
+- **Supabase:** `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
+- **Admin:** `ADMIN_PASSWORD`
+- **App URL:** `NEXT_PUBLIC_BASE_URL` (used in emails and signing links)
+- **AI:** `ANTHROPIC_API_KEY` (recommended) or `LAVA_FORWARD_TOKEN` + `LAVA_ANTHROPIC_MODEL` as needed
+- **Email:** `RESEND_API_KEY`, `RESEND_FROM_EMAIL`
+- **Optional:** `TAVILY_API_KEY`, `GITHUB_TOKEN`, Google Calendar vars, Slack vars, `CRON_SECRET`, transcript keys — see **Architecture** doc
+
+Apply database migrations (Supabase CLI or SQL Editor):
+
+```bash
+# e.g. supabase db push — or run files under supabase/migrations/ manually
+```
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) for the careers site; `/admin/login` for the hiring console.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Scripts
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Command | Purpose |
+|---------|---------|
+| `npm run dev` | Development server |
+| `npm run build` | Production build |
+| `npm run start` | Run production server |
+| `npm run lint` | ESLint |
 
-## Learn More
+## Documentation
 
-To learn more about Next.js, take a look at the following resources:
+- **[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)** — Stack, AI tools, how each integration works, and improvement ideas.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## License
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Private project — adjust as needed.

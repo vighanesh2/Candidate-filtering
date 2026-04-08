@@ -153,6 +153,7 @@ export default function CandidatePage({ params }: { params: Promise<{ id: string
   const [offerSignatureCaptured, setOfferSignatureCaptured] = useState<string | null>(null);
   const [offerSigningToken, setOfferSigningToken] = useState<string | null>(null);
   const [sendingSignLink, setSendingSignLink] = useState(false);
+  const [sendingSlackInvite, setSendingSlackInvite] = useState(false);
   const [slackInviteSentAt, setSlackInviteSentAt] = useState<string | null>(null);
   const [slackInviteMethod, setSlackInviteMethod] = useState<string | null>(null);
   const [slackWelcomeSentAt, setSlackWelcomeSentAt] = useState<string | null>(null);
@@ -406,6 +407,25 @@ export default function CandidatePage({ params }: { params: Promise<{ id: string
       setOfferSignMessage("Marked approved — you can email the signing link next.");
     } else {
       setOfferError(body.error ?? "Could not update status");
+    }
+  }
+
+  async function sendSlackInviteNow() {
+    if (!app) return;
+    setSendingSlackInvite(true);
+    setOfferError(null);
+    setOfferSignMessage(null);
+    const res = await fetch(`/api/admin/applications/${app.id}/slack-invite`, { method: "POST" });
+    const body = await res.json();
+    setSendingSlackInvite(false);
+    const job = jobs.find((j) => j.id === app.role_id);
+    if (body.offerLetter) {
+      applyOfferBackendRow(body.offerLetter as Record<string, unknown>, job?.title ?? "");
+    }
+    if (res.ok) {
+      setOfferSignMessage("Slack workspace invite email sent (and DB updated). Welcome DM still fires when they join Slack.");
+    } else {
+      setOfferError(body.error ?? "Could not send Slack invite");
     }
   }
 
@@ -785,23 +805,38 @@ export default function CandidatePage({ params }: { params: Promise<{ id: string
                   {offerSignatureMethod === "typed" && offerSignatureCaptured && (
                     <p className="text-sm font-medium text-emerald-950 mt-1">“{offerSignatureCaptured}”</p>
                   )}
-                  {(slackInviteSentAt || slackWelcomeSentAt || slackHrNotifiedAt) && (
-                    <div className="mt-3 pt-3 border-t border-emerald-200/80 text-xs text-emerald-900 space-y-1">
-                      <p className="font-semibold text-emerald-950">Slack onboarding (Phase 06)</p>
-                      {slackInviteSentAt && (
-                        <p>
-                          Workspace invite email sent {new Date(slackInviteSentAt).toLocaleString()}
-                          {slackInviteMethod ? ` · ${slackInviteMethod.replace(/_/g, " ")}` : ""}
-                        </p>
-                      )}
-                      {slackWelcomeSentAt && (
-                        <p>Welcome DM sent {new Date(slackWelcomeSentAt).toLocaleString()}</p>
-                      )}
-                      {slackHrNotifiedAt && (
-                        <p>HR channel notified {new Date(slackHrNotifiedAt).toLocaleString()}</p>
-                      )}
-                    </div>
-                  )}
+                  <div className="mt-3 pt-3 border-t border-emerald-200/80 space-y-2">
+                    <p className="font-semibold text-emerald-950 text-xs">Slack onboarding (Phase 06)</p>
+                    <button
+                      type="button"
+                      onClick={() => void sendSlackInviteNow()}
+                      disabled={sendingSlackInvite}
+                      className="rounded-lg bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-semibold px-3 py-2 transition-colors"
+                    >
+                      {sendingSlackInvite ? "Sending…" : "Send Slack workspace invite email"}
+                    </button>
+                    <p className="text-[11px] text-emerald-800/90">
+                      Same action as after sign: emails the candidate your{" "}
+                      <code className="text-emerald-900">SLACK_WORKSPACE_INVITE_URL</code>. Use to resend or if the
+                      automatic send failed. Needs Resend + invite URL configured.
+                    </p>
+                    {(slackInviteSentAt || slackWelcomeSentAt || slackHrNotifiedAt) && (
+                      <div className="text-xs text-emerald-900 space-y-1">
+                        {slackInviteSentAt && (
+                          <p>
+                            Last invite email {new Date(slackInviteSentAt).toLocaleString()}
+                            {slackInviteMethod ? ` · ${slackInviteMethod.replace(/_/g, " ")}` : ""}
+                          </p>
+                        )}
+                        {slackWelcomeSentAt && (
+                          <p>Welcome DM sent {new Date(slackWelcomeSentAt).toLocaleString()}</p>
+                        )}
+                        {slackHrNotifiedAt && (
+                          <p>HR channel notified {new Date(slackHrNotifiedAt).toLocaleString()}</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
