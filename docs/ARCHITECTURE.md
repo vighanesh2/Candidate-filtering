@@ -134,6 +134,10 @@ This document describes the **Candidate Filtering** / hiring pipeline app: stack
 
 See **[EDGE_CASES.md](./EDGE_CASES.md)** for a concise write-up of the top five production edge cases (duplicate applications, closed roles, scheduling races, offer signing, Slack welcome deduplication).
 
+## Deliberate trade-offs
+
+See **[TRADEOFFS.md](./TRADEOFFS.md)** for documented simplifications (custom e-sign vs vendor, admin auth model, Google Calendar OAuth shape, jobs in code, Slack matching strategy, research “safe mode” under Lava).
+
 ---
 
 *Last updated to match the repository layout as of the doc author’s pass; adjust env names in deployment dashboards to match `README.md`.*
